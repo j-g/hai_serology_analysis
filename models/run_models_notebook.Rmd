@@ -1,0 +1,208 @@
+```{r}
+################################################################################
+# Example notebook to reproduce analysis for manuscript titled:
+# Immune experience at time of circulation and time since virus circulation are
+# predictors of HAI titre
+################################################################################
+
+# Run this code chunk first
+
+# Load libraries
+library(dplyr)
+library(rstan)
+library(splines2)
+library(reshape2)
+
+# Useful function for if file already exists, don't overwrite but append with
+# REP_(number of repetition)
+serialNext<-function(prefix, ext)
+{
+   f<-paste0(prefix, ext)
+   if(!file.exists(f))
+   {
+      return(f)
+   }
+   
+   i<-1
+   repeat
+   {
+      f<-paste0(prefix, "_REP_", i, ext)
+      if(!file.exists(f))
+      {
+         return(f)
+      }
+      i<-i+1
+   }
+}
+
+# Load R scripts to fit models and process their output
+source("model_fitting_functions.R")
+source("model_output_process_functions.R")
+
+# Load sero data
+load("../dat/sero_data.RData")
+# Pick which cohort to study (aus_97, aus_98, hanam_07, china_14*)
+# *awaiting permission to include, for now go to:
+# https://github.com/UF-IDD/Fluscape_Paired_Serology/
+data<-"hanam_07"
+dat <- get(data)
+
+# Now run whichever of the next code chunks fits the desired model
+```
+
+```{r}
+################
+# 1 spline model
+################
+# Set model parameters
+n_knot<-2
+k_space<-"prop"
+deg<-3
+niter<-5000
+cores<-4
+# Pick which variable (Age, AgeCirc, TSFE*)
+# *TSFE is the name of ImmAgeCirc in the data (Time Since First potential
+# Exposure)
+vars<-"TSFE"
+
+# Fit model
+out<-fit_mod_1_spline(dat, n_knot, k_space, deg, niter, cores, vars)
+
+# Calculate loo
+loo_out<-get_loo(out, cores)
+
+# Process output to replace large object 'out'
+out<-process_spline_out(out)
+
+# Prepare filename for saving output
+var_names<-paste(vars, collapse = "_")
+prefix<-paste0("../out/mcmc_out_", var_names, "_", data, "_", n_knot, "_", k_space, "_", deg, "_", niter)
+fname<-serialNext(prefix, ".RData")
+
+# Save output
+if (!dir.exists("../out")){
+  dir.create("../out")
+}
+
+save(out, loo_out, file=fname)
+```
+
+```{r}
+################
+# 2 spline model
+################
+# Set model parameters
+n_knot<-2
+k_space<-"prop"
+deg<-3
+niter<-5000
+cores<-4
+# Pick any 2 combinations of variables (Age, AgeCirc, TSFE*)
+# *TSFE is the name of ImmAgeCirc in the data (Time Since First potential
+# Exposure)
+vars<-c("AgeCirc", "Age")
+
+# Fit model
+out<-fit_mod_2_spline(dat, n_knot, k_space, deg, niter, cores, vars)
+
+# Calculate loo
+loo_out<-get_loo(out, cores)
+
+# Process output to replace large object 'out'
+out<-process_spline_out(out)
+
+# Prepare filename for saving output
+var_names<-paste(vars, collapse = "_")
+prefix<-paste0("../out/mcmc_out_", var_names, "_", data, "_", n_knot, "_", k_space, "_", deg, "_", niter)
+fname<-serialNext(prefix, ".RData")
+
+# Save output
+if (!dir.exists("../out")){
+  dir.create("../out")
+}
+
+save(out, loo_out, file=fname)
+```
+
+```{r}
+##################
+# Parametric model
+##################
+# Set model parameters
+niter<-5000
+cores<-4
+
+# Fit model
+out<-fit_mod_parametric(dat, niter, cores)
+
+# Calculate loo
+loo_out<-get_loo(out, cores)
+
+# Process output to replace large object 'out'
+out<-process_param_out(out)
+
+# Prepare filename for saving output
+prefix<-paste0("../out/mcmc_out_parametric_", data, "_", niter)
+fname<-serialNext(prefix, ".RData")
+
+# Save output
+if (!dir.exists("../out")){
+  dir.create("../out")
+}
+
+# Save output
+save(out, loo_out, file=fname)
+```
+
+```{r}
+###############################################
+# Minimal code to plot output from spline model
+###############################################
+library(ggplot2)
+
+# First, load an output, or use one just generated above
+
+ggplot(out$spline_tsfe, aes(x=x, y=med))+
+  geom_line()+
+  geom_ribbon(aes(ymin=lo, ymax=hi), alpha=0.3)+
+  geom_ribbon(aes(ymin=lolo, ymax=hihi), alpha=0.3)+
+  facet_wrap(vars(spline))
+
+ggplot(out$strain, aes(x=year, y=med))+
+  geom_point()+
+  geom_linerange(aes(ymin=lo, ymax=hi), size=1.5)+
+  geom_linerange(aes(ymin=lolo, ymax=hihi), size=.75)
+```
+
+```{r}
+###################################################
+# Minimal code to plot output from parametric model
+###################################################
+library(ggplot2)
+
+# First, load an output, or use one just generated above
+
+ggplot(out$df_AC, aes(x=AgeCirc, y=med))+
+  geom_line()+
+  labs(x="AgeCirc", y=expression('Log'[2]~'titre contribution'))+
+  geom_ribbon(aes(ymin=lolo, ymax=hihi), alpha=0.2)+
+  geom_ribbon(aes(ymin=lo, ymax=hi), alpha=0.2)
+
+ggplot(out$df_TSFE, aes(x=TSFE, y=med))+
+  geom_line()+
+  labs(x="ImmAgeCirc", y=expression('Log'[2]~'titre contribution'))+
+  geom_ribbon(aes(ymin=lolo, ymax=hihi), alpha=0.2)+
+  geom_ribbon(aes(ymin=lo, ymax=hi), alpha=0.2)
+
+ggplot(out$df_TSC, aes(x=TSC, y=med))+
+  geom_line()+
+  labs(x="TSC", y=expression('Log'[2]~'titre contribution'))+
+  geom_ribbon(aes(ymin=lolo, ymax=hihi), alpha=0.2)+
+  geom_ribbon(aes(ymin=lo, ymax=hi), alpha=0.2)
+
+ggplot(out$df_strain, aes(x=year, y=med))+
+  geom_point()+
+  labs(x="Strain year", y=expression('Log'[2]~'titre contribution'))+
+  geom_linerange(aes(ymin=lolo, ymax=hihi), size=0.75)+
+  geom_linerange(aes(ymin=lo, ymax=hi), size=1.5)
+```
